@@ -14,6 +14,19 @@ const logger = {
    */
   logToGuild: async (guild, logType, content) => {
     if (!guild) return;
+
+    // Only keep: Payment Logs, Invite Logs, Boost Logs, Moderation Logs
+    const allowedTypes = [
+      'invite join', 'invite leave', 'invite reward granted', 'invite reward revoked', 'invites reset', 'user invite reset',
+      'new server boost', 'server boost ended', 'booster role granted', 'booster role revoked',
+      'member banned', 'member unbanned', 'member kicked', 'messages cleared', 'channel locked', 'channel unlocked',
+      'role given', 'role removed', 'member timed out', 'member untimed out', 'warning issued', 'warnings cleared',
+      'member muted', 'member unmuted', 'nickname changed',
+      'payment submission', 'payment approved', 'payment rejected'
+    ];
+
+    if (!allowedTypes.includes(logType.toLowerCase())) return;
+
     try {
       const config = await GuildConfig.findOne({ guildId: guild.id });
       if (!config || !config.logChannelId) return;

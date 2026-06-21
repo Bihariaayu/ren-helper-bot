@@ -31,13 +31,15 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildInvites,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions
   ],
   partials: [
     Partials.User,
     Partials.GuildMember,
     Partials.Message,
-    Partials.Channel
+    Partials.Channel,
+    Partials.Reaction
   ]
 });
 

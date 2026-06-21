@@ -12,6 +12,10 @@ module.exports = {
     // Register slash commands
     await client.registerSlashCommands();
 
+    // Initialize Giveaway Manager
+    const giveawayManager = require('../../utils/giveawayManager');
+    giveawayManager.init(client);
+
     // Set default presence
     const { ActivityType } = require('discord.js');
     client.user.setPresence({
