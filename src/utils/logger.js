@@ -42,10 +42,12 @@ const logger = {
       }
 
       if (typeof content === 'string') {
+        const isNegative = logType.toLowerCase().match(/(ban|kick|timeout|warn|mute|reject|leave|ended|revoked)/i);
+        const logColor = isNegative ? 'red' : 'green';
         const embed = createEmbed({
           title: `📝 ${logType}`,
           description: content,
-          color: 'dark',
+          color: logColor,
           timestamp: true
         });
         await logChannel.send({ embeds: [embed] });

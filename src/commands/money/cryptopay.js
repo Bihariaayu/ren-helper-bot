@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const PaymentConfig = require('../../database/models/PaymentConfig');
-const { createEmbed, success, error, info } = require('../../utils/embedBuilder');
+const { createEmbed, success, error } = require('../../utils/embedBuilder');
 
 const cryptoMap = {
   'BTC': { id: 'bitcoin', name: 'Bitcoin', logo: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png' },
@@ -96,24 +96,33 @@ async function generateCryptoRequest(context, symbol, amount, isInteraction) {
     // Generate QR Code URL of the wallet address
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(address)}`;
 
-    const payEmbed = info(
-      `Send the exact crypto amount to the address below.\n\n` +
-      `📦 **Wallet Address:**\n\`${address}\``,
-      `☁️ Ren Cloud ${coinData.name} Payment`
-    )
-    .setImage(qrUrl)
-    .setThumbnail(coinData.logo)
-    .addFields([
-      { name: '🪙 Cryptocurrency', value: `\`${coinData.name} (${symbol})\``, inline: true },
-      { name: '🧾 Payment ID', value: `\`${paymentId}\``, inline: true },
-      { name: '💰 Amount requested', value: `\`${amount} ${symbol}\``, inline: true },
-      { name: '💵 USD Value (Est.)', value: `\`${usdValueText}\``, inline: true }
-    ]);
+    const payEmbed = createEmbed({
+      color: 'green',
+      title: `💸 Ren Money ${coinData.name} Billing`,
+      image: qrUrl,
+      thumbnail: coinData.logo,
+      fields: [
+        { name: '🪙 Cryptocurrency', value: `\`${coinData.name} (${symbol})\``, inline: true },
+        { name: '💰 Requested Amount', value: `\`${amount} ${symbol}\` (${usdValueText})`, inline: true },
+        { name: '🧾 Payment ID', value: `\`${paymentId}\``, inline: true },
+        { name: '📦 Wallet Address', value: `\`${address}\``, inline: false },
+        {
+          name: '⚡ Payment Instructions',
+          value: `1. Scan the QR code or copy the wallet address above.\n` +
+                 `2. Send the exact amount from your crypto wallet.\n` +
+                 `3. Wait for the transaction to broadcast and capture a **screenshot**.\n` +
+                 `4. Click **Confirm Payment** below to submit.`,
+          inline: false
+        }
+      ],
+      footer: 'Ren Money - Premium Payment Solutions',
+      timestamp: true
+    });
 
     const actionRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`pay_proof_upload:${paymentId}:${symbol}:${amount}`)
-        .setLabel('📸 Upload Payment Proof')
+        .setLabel('📸 Confirm Payment')
         .setStyle(ButtonStyle.Success)
     );
 

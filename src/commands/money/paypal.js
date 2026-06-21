@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const PaymentConfig = require('../../database/models/PaymentConfig');
-const { createEmbed, success, error, info } = require('../../utils/embedBuilder');
+const { createEmbed, success, error } = require('../../utils/embedBuilder');
 
 module.exports = {
   name: 'paypal',
@@ -45,22 +45,32 @@ async function generatePaypalRequest(context, amount, isInteraction) {
     const paypalLink = `https://www.paypal.me/${config.paypalUsername}${amountSuffix}`;
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(paypalLink)}`;
 
-    const payEmbed = info(
-      `Scan the QR Code below to pay via PayPal, or click the link to open PayPal.me.\n\n` +
-      `🔗 **Pay Online:** [PayPal.me Link](${paypalLink})`,
-      `☁️ Ren Cloud PayPal Payment`
-    )
-    .setImage(qrUrl)
-    .addFields([
-      { name: '👤 Username', value: `\`@${config.paypalUsername}\``, inline: true },
-      { name: '🧾 Payment ID', value: `\`${paymentId}\``, inline: true },
-      { name: '💰 Amount Requested', value: amount ? `\`$${amount.toLocaleString()}\` USD` : '`Flexible Amount`', inline: true }
-    ]);
+    const payEmbed = createEmbed({
+      color: 'green',
+      title: '💸 Ren Money PayPal Billing',
+      image: qrUrl,
+      fields: [
+        { name: '👤 PayPal Username', value: `\`@${config.paypalUsername}\``, inline: true },
+        { name: '💰 Requested Amount', value: amount ? `\`$${amount.toLocaleString()}\` USD` : '`Flexible Amount`', inline: true },
+        { name: '🧾 Payment ID', value: `\`${paymentId}\``, inline: true },
+        {
+          name: '⚡ Payment Instructions',
+          value: `1. Scan the QR code or click the direct link below to open PayPal.me.\n` +
+                 `   🔗 **Pay Online:** [PayPal.me Link](${paypalLink})\n` +
+                 `2. Enter the amount and complete the transaction.\n` +
+                 `3. Capture a screenshot of the transaction confirmation.\n` +
+                 `4. Click **Confirm Payment** below to submit.`,
+          inline: false
+        }
+      ],
+      footer: 'Ren Money - Premium Payment Solutions',
+      timestamp: true
+    });
 
     const actionRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`pay_proof_upload:${paymentId}:PayPal:${amount || 'none'}`)
-        .setLabel('📸 Upload Payment Proof')
+        .setLabel('📸 Confirm Payment')
         .setStyle(ButtonStyle.Success)
     );
 

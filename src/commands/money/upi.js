@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const PaymentConfig = require('../../database/models/PaymentConfig');
-const { createEmbed, success, error, info } = require('../../utils/embedBuilder');
+const { createEmbed, success, error } = require('../../utils/embedBuilder');
 
 module.exports = {
   name: 'upi',
@@ -51,26 +51,32 @@ async function generateUpiRequest(context, amount, notes, isInteraction) {
     const upiLink = `upi://pay?pa=${config.upiId}&pn=${encodeURIComponent(merchantName)}&am=${formattedAmount}&tn=${paymentId}&cu=INR`;
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiLink)}`;
 
-    const payEmbed = info(
-      `Scan the QR Code with any UPI app (GPay, PhonePe, Paytm) to make the payment.\n\n` +
-      `⚠️ **Important:** Please keep the transfer note/transaction description as **\`${paymentId}\`** to ensure your payment matches.\n\n` +
-      `📱 **Direct UPI Link:**\n\`${upiLink}\``,
-      `☁️ Ren Cloud UPI Payment`
-    )
-    .setImage(qrUrl)
-    .addFields([
-      { name: '👤 Merchant Name', value: `\`${merchantName}\``, inline: true },
-      { name: '💳 UPI ID', value: `\`${config.upiId}\``, inline: true },
-      { name: '🧾 Payment ID (Note)', value: `\`${paymentId}\``, inline: true },
-      { name: '💰 Amount Requested', value: amount ? `\`₹${amount.toLocaleString('en-IN')}\` INR` : '`Flexible Amount`', inline: true },
-      { name: '📝 Additional Notes', value: `\`${notes}\``, inline: false }
-    ]);
+    const payEmbed = createEmbed({
+      color: 'green',
+      title: '💸 Ren Money UPI Billing',
+      image: qrUrl,
+      fields: [
+        { name: '💳 UPI Address', value: `\`${config.upiId}\``, inline: true },
+        { name: '💰 Requested Amount', value: amount ? `\`₹${amount.toLocaleString('en-IN')}\`` : '`Flexible Amount`', inline: true },
+        { name: '🧾 Payment ID', value: `\`${paymentId}\``, inline: true },
+        {
+          name: '⚡ Payment Instructions',
+          value: `1. Scan the QR code using any UPI App (**GPay, PhonePe, Paytm, BHIM**).\n` +
+                 `2. Verify the payment details match above.\n` +
+                 `3. Complete transaction and capture a **screenshot**.\n` +
+                 `4. Click **Confirm Payment** below to submit.`,
+          inline: false
+        }
+      ],
+      footer: 'Ren Money - Premium Payment Solutions',
+      timestamp: true
+    });
 
     // Button to upload proof
     const actionRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`pay_proof_upload:${paymentId}:UPI:${amount || 'none'}`)
-        .setLabel('📸 Upload Payment Proof')
+        .setLabel('📸 Confirm Payment')
         .setStyle(ButtonStyle.Success)
     );
 

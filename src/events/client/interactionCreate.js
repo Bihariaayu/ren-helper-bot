@@ -229,7 +229,7 @@ module.exports = {
                   const logEmbed = createEmbed({
                     title: `💳 New Payment Submission`,
                     description: `A customer has uploaded payment proof for verification.`,
-                    color: 'dark',
+                    color: 'green',
                     timestamp: true
                   })
                   .setImage(attachment.url)

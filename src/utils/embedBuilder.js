@@ -63,5 +63,5 @@ module.exports = {
   createEmbed,
   success: (description, title = '✅ Success', options = {}) => createEmbed({ color: 'green', title, description, timestamp: true, ...options }),
   error: (description, title = '❌ Error', options = {}) => createEmbed({ color: 'red', title, description, timestamp: true, ...options }),
-  info: (description, title = '☁️ Information', options = {}) => createEmbed({ color: 'dark', title, description, timestamp: true, ...options })
+  info: (description, title = '☁️ Information', options = {}) => createEmbed({ color: 'green', title, description, timestamp: true, ...options })
 };
