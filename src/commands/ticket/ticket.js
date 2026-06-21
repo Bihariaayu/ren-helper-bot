@@ -26,7 +26,19 @@ module.exports = {
   slashData: new SlashCommandBuilder()
     .setName('ticket')
     .setDescription('Ticket management suite.')
-    .addSubcommand(sub => sub.setName('setup').setDescription('Set up the ticket panels.'))
+    .addSubcommand(sub => sub
+      .setName('setup')
+      .setDescription('Set up the ticket panels.')
+      .addStringOption(opt => opt
+        .setName('category-type')
+        .setDescription('Render category options as buttons or a select menu')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Button', value: 'button' },
+          { name: 'Select Menu (Premium Preview)', value: 'dropdown' }
+        )
+      )
+    )
     .addSubcommand(sub => sub.setName('config').setDescription('Access interactive configuration menu.'))
     .addSubcommand(sub => sub.setName('create').setDescription('Create a ticket manually.'))
     .addSubcommand(sub => sub.setName('close').setDescription('Closes the active support ticket.').addStringOption(opt => opt.setName('reason').setDescription('Reason for closing').setRequired(false)))
@@ -72,7 +84,11 @@ module.exports = {
     }
 
     // Route Prefix commands
-    if (sub === 'setup') return startSetup(message, message.author, false);
+    if (sub === 'setup') {
+      const typeArg = args[1]?.toLowerCase();
+      const panelType = (typeArg === 'select' || typeArg === 'dropdown' || typeArg === 'select menu') ? 'dropdown' : 'button';
+      return startSetup(message, message.author, panelType, false);
+    }
     if (sub === 'config') return startConfig(message, false);
     if (sub === 'create') return runCreate(message, false);
     
@@ -125,7 +141,10 @@ module.exports = {
       return interaction.reply({ embeds: [error('You must be an Administrator to run configuration commands.')], ephemeral: true });
     }
 
-    if (sub === 'setup') return startSetup(interaction, interaction.user, true);
+    if (sub === 'setup') {
+      const panelType = interaction.options.getString('category-type') || 'button';
+      return startSetup(interaction, interaction.user, panelType, true);
+    }
     if (sub === 'config') return startConfig(interaction, true);
     if (sub === 'create') return runCreate(interaction, true);
     
@@ -174,51 +193,68 @@ module.exports = {
 // SETUP PANEL BUILDER (MATCHING USER IMAGES)
 // ==========================================
 
-async function startSetup(context, user, isInteraction) {
+async function startSetup(context, user, panelType, isInteraction) {
   const key = `${context.guild.id}:${user.id}`;
   
   const session = {
+    panelType,
     embedData: {
-      description: 'Please enter the requested information as prompted. This embed will automatically populate with the information you provide.',
+      title: '🎫 Support Ticket Panel',
+      description: 'Select an option below to open a support ticket.',
       color: 0x5865F2,
     },
+    panelCategories: [],
     message: null,
     currentCollector: null
   };
 
   activeSetupSessions.set(key, session);
 
-  const previewEmbed = createEmbed(session.embedData);
-  const rows = getSetupScreenButtons();
+  const setupEmbed = getSetupPreviewEmbed(session);
+  const rows = getSetupScreenButtons(panelType);
 
   if (isInteraction) {
-    const msg = await context.reply({ embeds: [previewEmbed], components: rows, fetchReply: true });
+    const msg = await context.reply({ embeds: [setupEmbed], components: rows, fetchReply: true });
     session.message = msg;
   } else {
-    const msg = await context.reply({ embeds: [previewEmbed], components: rows });
+    const msg = await context.reply({ embeds: [setupEmbed], components: rows });
     session.message = msg;
   }
 }
 
-function getSetupScreenButtons() {
+function getSetupPreviewEmbed(session) {
+  const embed = createEmbed(session.embedData);
+  embed.setTitle('🎫 Ticket Categories Setup');
+  
+  let desc = 'Use the buttons below to add categories.\n\n**Categories Configured:**\n';
+  if (session.panelCategories.length === 0) {
+    desc += '❌ No categories configured yet.';
+  } else {
+    session.panelCategories.forEach((cat, idx) => {
+      const emojiStr = cat.emoji ? `${cat.emoji} ` : '';
+      const roleStr = cat.roleId ? `<@&${cat.roleId}>` : '`Global Default`';
+      const categoryStr = cat.categoryId ? `<#${cat.categoryId}>` : '`Global Default`';
+      desc += `**${idx + 1}.** ${emojiStr}**${cat.name}**\n   └ Role: ${roleStr} | Category: ${categoryStr}\n`;
+    });
+  }
+  embed.setDescription(desc);
+  return embed;
+}
+
+function getSetupScreenButtons(panelType) {
+  const label = panelType === 'dropdown' ? 'Add Select Menu Option' : 'Add Button Option';
+  
   const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('ticket_setup_title').setLabel('Title').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('ticket_setup_desc').setLabel('Description').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('ticket_setup_color').setLabel('Color').setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId('ticket_setup_add_cat').setLabel(label).setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('ticket_setup_remove_cat').setLabel('Remove Category').setStyle(ButtonStyle.Secondary)
   );
 
   const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('ticket_setup_image').setLabel('Image').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('ticket_setup_thumbnail').setLabel('Thumbnail').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('ticket_setup_json').setLabel('JSON').setStyle(ButtonStyle.Success)
-  );
-
-  const row3 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('ticket_setup_save').setLabel('Save & Set Category').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('ticket_setup_finish').setLabel('FINISH').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('ticket_setup_exit').setLabel('Exit').setStyle(ButtonStyle.Danger)
   );
 
-  return [row1, row2, row3];
+  return [row1, row2];
 }
 
 async function handleSetupButtons(interaction, client) {
@@ -228,23 +264,14 @@ async function handleSetupButtons(interaction, client) {
 
   if (!session || !customId.startsWith('ticket_setup_')) return;
 
-  if (customId === 'ticket_setup_title') {
-    await promptSetupInput(interaction, session, 'title', 'Enter title in the chat within next 10 minutes.');
+  if (customId === 'ticket_setup_add_cat') {
+    await promptAddCategory(interaction, session);
   }
-  else if (customId === 'ticket_setup_desc') {
-    await promptSetupInput(interaction, session, 'desc', 'Enter description in the chat within next 10 minutes.');
+  else if (customId === 'ticket_setup_remove_cat') {
+    await promptRemoveCategory(interaction, session);
   }
-  else if (customId === 'ticket_setup_color') {
-    await promptSetupInput(interaction, session, 'color', 'Enter color (Hex code) in the chat within next 10 minutes.');
-  }
-  else if (customId === 'ticket_setup_image') {
-    await promptSetupInput(interaction, session, 'image', 'Enter image URL in the chat within next 10 minutes.');
-  }
-  else if (customId === 'ticket_setup_thumbnail') {
-    await promptSetupInput(interaction, session, 'thumbnail', 'Enter thumbnail URL in the chat within next 10 minutes.');
-  }
-  else if (customId === 'ticket_setup_json') {
-    await promptSetupInput(interaction, session, 'json', 'Enter full panel embed JSON in the chat within next 10 minutes.');
+  else if (customId === 'ticket_setup_finish') {
+    await promptFinishPanel(interaction, session);
   }
   else if (customId === 'ticket_setup_exit') {
     if (session.currentCollector) session.currentCollector.stop('exit');
@@ -254,109 +281,265 @@ async function handleSetupButtons(interaction, client) {
       components: []
     });
   }
-  else if (customId === 'ticket_setup_save') {
-    await promptSetupInput(interaction, session, 'save', 'Enter the Category ID where you want tickets to be created.');
+  else if (customId === 'ticket_setup_deploy_here') {
+    await deployPanelToChannel(interaction, session, interaction.channel);
+  }
+  else if (customId === 'ticket_setup_deploy_other') {
+    await promptDeployOtherChannel(interaction, session);
+  }
+  else if (customId === 'ticket_setup_deploy_cancel') {
+    const setupEmbed = getSetupPreviewEmbed(session);
+    const rows = getSetupScreenButtons(session.panelType);
+    await interaction.update({
+      embeds: [setupEmbed],
+      components: rows
+    });
   }
 }
 
-async function promptSetupInput(interaction, session, fieldName, promptMessage) {
+async function promptAddCategory(interaction, session) {
   if (session.currentCollector) {
     session.currentCollector.stop('new_prompt');
   }
 
-  await interaction.reply({ content: `💬 ${promptMessage}`, ephemeral: true });
+  await interaction.reply({ content: '💬 **Question 1/4:** Enter the name of the category (e.g. `VPS Support` or `General Support`).', ephemeral: true });
 
   const channel = interaction.channel;
   const filter = m => m.author.id === interaction.user.id;
   const collector = channel.createMessageCollector({ filter, time: 600000 });
-  
   session.currentCollector = collector;
+
+  let step = 1;
+  const newCat = { name: '', emoji: null, roleId: null, categoryId: null };
 
   collector.on('collect', async (msg) => {
     try {
       const content = msg.content.trim();
-
+      
       if (channel.permissionsFor(interaction.guild.members.me).has('ManageMessages')) {
         await msg.delete().catch(() => null);
       }
 
-      if (fieldName === 'title') {
-        session.embedData.title = content;
-      } 
-      else if (fieldName === 'desc') {
-        session.embedData.description = content;
-      } 
-      else if (fieldName === 'color') {
-        session.embedData.color = content;
-      } 
-      else if (fieldName === 'image') {
-        session.embedData.image = content;
-      } 
-      else if (fieldName === 'thumbnail') {
-        session.embedData.thumbnail = content;
-      } 
-      else if (fieldName === 'json') {
-        try {
-          const parsed = JSON.parse(content);
-          session.embedData = { ...session.embedData, ...parsed };
-        } catch (e) {
-          await channel.send({ embeds: [error('Invalid JSON structure.')] }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
-          collector.stop('invalid_json');
-          return;
-        }
-      } 
-      else if (fieldName === 'save') {
-        // Validate category ID
-        const category = await interaction.guild.channels.fetch(content).catch(() => null);
-        if (!category || category.type !== ChannelType.GuildCategory) {
-          await channel.send({ embeds: [error('Invalid ID. Please specify a valid Guild Category ID.')] }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
-          collector.stop('category_failed');
-          return;
-        }
-
-        // Save Config in DB
-        await TicketConfig.findOneAndUpdate(
-          { guildId: interaction.guildId },
-          { 
-            $set: { 
-              panelEmbed: session.embedData,
-              categoryId: category.id
-            }
-          },
-          { upsert: true }
-        );
-
-        activeSetupSessions.delete(`${interaction.guildId}:${interaction.user.id}`);
-        collector.stop('saved');
-
-        // Deploy panel
-        const panelEmbed = createEmbed(session.embedData);
-        const panelRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('ticket_create_btn').setLabel('🎫 Create Ticket').setStyle(ButtonStyle.Primary)
-        );
-
-        await session.message.edit({
-          embeds: [success(`Ticket Panel configured successfully and bound to Category: **${category.name}**!`)],
-          components: []
-        }).catch(() => null);
-
-        // Send panel in the channel
-        await channel.send({ embeds: [panelEmbed], components: [panelRow] });
-        
-        logger.logToGuild(interaction.guild, 'Ticket Panel Created', `🎫 Ticket creation panel deployed in ${channel} by ${interaction.user}`);
+      if (content.toLowerCase() === 'cancel') {
+        await channel.send({ content: '❌ Category addition aborted.' }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+        collector.stop('cancelled');
         return;
       }
 
-      const updatedEmbed = createEmbed(session.embedData);
-      await session.message.edit({ embeds: [updatedEmbed] }).catch(() => null);
+      if (step === 1) {
+        if (!content) {
+          await channel.send({ content: '❌ Name cannot be empty.' }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+          return;
+        }
+        newCat.name = content;
+        step = 2;
+        await channel.send({ content: '💬 **Question 2/4:** Enter an emoji that will represent the category. Type `skip` to skip or `cancel` to abort the process.' }).then(m => setTimeout(() => m.delete().catch(() => null), 6000));
+      }
+      else if (step === 2) {
+        if (content.toLowerCase() !== 'skip') {
+          newCat.emoji = content;
+        }
+        step = 3;
+        await channel.send({ content: '💬 **Question 3/4:** Please enter the role name, mention, or ID that should be notified when a new ticket is created under this category. Type `none` or `default` to use default ticket role, or `cancel` to cancel this action.' }).then(m => setTimeout(() => m.delete().catch(() => null), 8000));
+      }
+      else if (step === 3) {
+        if (content.toLowerCase() !== 'none' && content.toLowerCase() !== 'default') {
+          const role = msg.mentions.roles.first() || interaction.guild.roles.cache.find(r => r.name.toLowerCase() === content.toLowerCase() || r.id === content);
+          if (!role) {
+            await channel.send({ content: '❌ Role not found. Please enter a valid role name, mention, or ID. Try again or type `default` to skip.' }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
+            return;
+          }
+          newCat.roleId = role.id;
+        }
+        step = 4;
+        await channel.send({ content: '💬 **Question 4/4:** Please enter the Category ID where tickets of this type should be created. Type `default` to use default ticket category, or `cancel` to cancel this action.' }).then(m => setTimeout(() => m.delete().catch(() => null), 8000));
+      }
+      else if (step === 4) {
+        if (content.toLowerCase() !== 'default') {
+          const category = await interaction.guild.channels.fetch(content).catch(() => null);
+          if (!category || category.type !== ChannelType.GuildCategory) {
+            await channel.send({ content: '❌ Invalid Category ID. Please specify a valid Guild Category ID. Try again or type `default` to skip.' }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
+            return;
+          }
+          newCat.categoryId = category.id;
+        }
 
-      await channel.send({ content: `✅ **${fieldName.toUpperCase()}** updated.` }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
-      collector.stop('collected');
+        session.panelCategories.push(newCat);
+        collector.stop('completed');
+
+        const updatedEmbed = getSetupPreviewEmbed(session);
+        await session.message.edit({ embeds: [updatedEmbed] }).catch(() => null);
+
+        await channel.send({ content: `✅ Added category option **${newCat.name}**!` }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+      }
 
     } catch (err) {
-      console.error(`Error collecting ticket setup input:`, err);
+      console.error('Error during category collection step:', err);
     }
   });
+}
+
+async function promptRemoveCategory(interaction, session) {
+  if (session.panelCategories.length === 0) {
+    return interaction.reply({ content: '❌ No categories configured to remove.', ephemeral: true });
+  }
+
+  if (session.currentCollector) {
+    session.currentCollector.stop('new_prompt');
+  }
+
+  await interaction.reply({ content: '💬 Enter the number of the category option you want to remove (e.g. `1` or type `cancel` to abort).', ephemeral: true });
+
+  const channel = interaction.channel;
+  const filter = m => m.author.id === interaction.user.id;
+  const collector = channel.createMessageCollector({ filter, time: 600000 });
+  session.currentCollector = collector;
+
+  collector.on('collect', async (msg) => {
+    const content = msg.content.trim();
+    if (channel.permissionsFor(interaction.guild.members.me).has('ManageMessages')) {
+      await msg.delete().catch(() => null);
+    }
+
+    if (content.toLowerCase() === 'cancel') {
+      collector.stop('cancelled');
+      return;
+    }
+
+    const idx = parseInt(content) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= session.panelCategories.length) {
+      await channel.send({ content: '❌ Invalid index. Please enter a number corresponding to the category list.' }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+      return;
+    }
+
+    const removed = session.panelCategories.splice(idx, 1)[0];
+    collector.stop('removed');
+
+    const updatedEmbed = getSetupPreviewEmbed(session);
+    await session.message.edit({ embeds: [updatedEmbed] }).catch(() => null);
+
+    await channel.send({ content: `✅ Removed category option **${removed.name}**.` }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+  });
+}
+
+async function promptFinishPanel(interaction, session) {
+  if (session.panelCategories.length === 0) {
+    return interaction.reply({ content: '❌ Please configure at least one category before finishing.', ephemeral: true });
+  }
+
+  const finishEmbed = info(
+    `Select where you want to deploy the ticket panel:`,
+    `🎫 Deploy Support Ticket Panel`
+  );
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_setup_deploy_here').setLabel('Send Here').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('ticket_setup_deploy_other').setLabel('Send in Another Channel').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('ticket_setup_deploy_cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger)
+  );
+
+  await interaction.update({
+    embeds: [finishEmbed],
+    components: [row]
+  });
+}
+
+async function promptDeployOtherChannel(interaction, session) {
+  if (session.currentCollector) {
+    session.currentCollector.stop('new_prompt');
+  }
+
+  await interaction.reply({ content: '💬 Enter the ID or mention of the channel where you want to send the ticket panel.', ephemeral: true });
+
+  const channel = interaction.channel;
+  const filter = m => m.author.id === interaction.user.id;
+  const collector = channel.createMessageCollector({ filter, time: 600000 });
+  session.currentCollector = collector;
+
+  collector.on('collect', async (msg) => {
+    const content = msg.content.trim();
+    if (channel.permissionsFor(interaction.guild.members.me).has('ManageMessages')) {
+      await msg.delete().catch(() => null);
+    }
+
+    if (content.toLowerCase() === 'cancel') {
+      collector.stop('cancelled');
+      return;
+    }
+
+    const cleanedId = content.replace(/[<#>]/g, '');
+    const targetChannel = await interaction.guild.channels.fetch(cleanedId).catch(() => null);
+
+    if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
+      await channel.send({ content: '❌ Invalid channel. Please enter a valid text channel mention or ID.' }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
+      return;
+    }
+
+    collector.stop('deployed');
+    await deployPanelToChannel(interaction, session, targetChannel);
+  });
+}
+
+async function deployPanelToChannel(interaction, session, targetChannel) {
+  try {
+    let conf = await TicketConfig.findOne({ guildId: interaction.guildId });
+    if (!conf) conf = new TicketConfig({ guildId: interaction.guildId });
+
+    conf.panelEmbed = session.embedData;
+    conf.panelCategories = session.panelCategories;
+    conf.panelType = session.panelType;
+    await conf.save();
+
+    const panelEmbed = createEmbed(session.embedData);
+    
+    const rows = [];
+    if (session.panelType === 'dropdown') {
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('ticket_create_select')
+        .setPlaceholder('Select a ticket category...');
+      session.panelCategories.forEach((cat, idx) => {
+        const option = {
+          label: cat.name,
+          value: `ticket_category_${idx}`
+        };
+        if (cat.emoji) option.emoji = cat.emoji;
+        selectMenu.addOptions(option);
+      });
+      rows.push(new ActionRowBuilder().addComponents(selectMenu));
+    } else {
+      let currentRow = new ActionRowBuilder();
+      session.panelCategories.forEach((cat, idx) => {
+        const btn = new ButtonBuilder()
+          .setCustomId(`ticket_create_category_${idx}`)
+          .setLabel(cat.name)
+          .setStyle(ButtonStyle.Primary);
+        if (cat.emoji) btn.setEmoji(cat.emoji);
+        currentRow.addComponents(btn);
+        if (currentRow.components.length === 5) {
+          rows.push(currentRow);
+          currentRow = new ActionRowBuilder();
+        }
+      });
+      if (currentRow.components.length > 0) {
+        rows.push(currentRow);
+      }
+    }
+
+    await targetChannel.send({ embeds: [panelEmbed], components: rows });
+
+    activeSetupSessions.delete(`${interaction.guildId}:${interaction.user.id}`);
+    
+    await interaction.update({
+      embeds: [success(`Ticket Panel deployed successfully in ${targetChannel}!`)],
+      components: []
+    }).catch(() => null);
+
+    logger.logToGuild(interaction.guild, 'Ticket Panel Created', `🎫 Support ticket panel deployed in ${targetChannel} by ${interaction.user}`);
+
+  } catch (err) {
+    console.error('Error deploying ticket panel:', err);
+    await interaction.followUp({ content: '❌ Failed to deploy ticket panel.', ephemeral: true }).catch(() => null);
+  }
 }
 
 // ==========================================
@@ -395,17 +578,24 @@ function getConfigTogglesRows(conf) {
   // Row 2
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('ticket_cfg_stats').setLabel('Show Opened Stats on Button').setStyle(conf.showOpenedStats ? ButtonStyle.Success : ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('ticket_cfg_perm').setLabel('Give Permissions').setStyle(conf.givePermissionsAuto ? ButtonStyle.Success : ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId('ticket_cfg_perm').setLabel('Give Permissions').setStyle(conf.givePermissionsAuto ? ButtonStyle.Success : ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('ticket_cfg_claim').setLabel('Ticket Claimable').setStyle(conf.claimable ? ButtonStyle.Success : ButtonStyle.Danger)
   );
 
   // Row 3
   const row3 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('ticket_cfg_claim').setLabel('Ticket Claimable').setStyle(conf.claimable ? ButtonStyle.Success : ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('ticket_cfg_limit').setLabel('One Ticket Per User').setStyle(conf.oneTicketPerUser ? ButtonStyle.Success : ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('ticket_cfg_set_default_cat').setLabel('Set Creation Cat').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('ticket_cfg_set_claimed_cat').setLabel('Set Claimed Cat').setStyle(ButtonStyle.Primary)
+  );
+
+  // Row 4
+  const row4 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_cfg_set_log_chan').setLabel('Set Logs Chan').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('ticket_cfg_back').setLabel('Go Back').setStyle(ButtonStyle.Secondary)
   );
 
-  return [row1, row2, row3];
+  return [row1, row2, row3, row4];
 }
 
 async function handleConfigButtons(interaction, client) {
@@ -443,6 +633,18 @@ async function handleConfigButtons(interaction, client) {
   else if (customId === 'ticket_cfg_limit') {
     conf.oneTicketPerUser = !conf.oneTicketPerUser;
   }
+  else if (customId === 'ticket_cfg_set_default_cat') {
+    await promptConfigChannelInput(interaction, 'categoryId', 'Enter the Category ID where tickets should be created by default.');
+    return;
+  }
+  else if (customId === 'ticket_cfg_set_claimed_cat') {
+    await promptConfigChannelInput(interaction, 'claimedCategoryId', 'Enter the Category ID where claimed tickets should be moved (Type disable to turn off).');
+    return;
+  }
+  else if (customId === 'ticket_cfg_set_log_chan') {
+    await promptConfigChannelInput(interaction, 'logChannelId', 'Enter the Channel ID where ticket close logs & transcripts should be sent.');
+    return;
+  }
   else if (customId === 'ticket_cfg_back') {
     return interaction.update({
       embeds: [info('Advanced configuration closed.')],
@@ -457,6 +659,43 @@ async function handleConfigButtons(interaction, client) {
   await interaction.update({ components: rows });
 }
 
+async function promptConfigChannelInput(interaction, fieldName, promptText) {
+  await interaction.reply({ content: `💬 ${promptText}`, ephemeral: true });
+
+  const channel = interaction.channel;
+  const filter = m => m.author.id === interaction.user.id;
+  const collector = channel.createMessageCollector({ filter, max: 1, time: 300000 });
+
+  collector.on('collect', async (msg) => {
+    const content = msg.content.trim();
+    if (channel.permissionsFor(interaction.guild.members.me).has('ManageMessages')) {
+      await msg.delete().catch(() => null);
+    }
+
+    if (content.toLowerCase() === 'cancel') return;
+
+    let targetId = content.replace(/[<#>]/g, '');
+    
+    if (fieldName === 'claimedCategoryId' && content.toLowerCase() === 'disable') {
+      targetId = null;
+    } else {
+      const targetChan = await interaction.guild.channels.fetch(targetId).catch(() => null);
+      if (!targetChan) {
+        await channel.send({ content: '❌ Invalid channel/category ID.' }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+        return;
+      }
+    }
+
+    await TicketConfig.findOneAndUpdate(
+      { guildId: interaction.guildId },
+      { $set: { [fieldName]: targetId } },
+      { upsert: true }
+    );
+
+    await channel.send({ content: `✅ Successfully updated config field **${fieldName}**!` }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+  });
+}
+
 // ==========================================
 // TICKET ACTION LISTENERS & WELCOMING FLOW
 // ==========================================
@@ -466,9 +705,36 @@ async function handleTicketActionButtons(interaction, client) {
   const guild = interaction.guild;
   const user = interaction.user;
 
-  // 1. CREATE TICKET ACTION BUTTON CLICKED (Panel Click)
-  if (customId === 'ticket_create_btn') {
-    await executeTicketCreation(interaction, user, guild);
+  // 1. CREATE TICKET ACTION BUTTON CLICKED (Panel Click or Dropdown Option)
+  let categoryOption = null;
+  let clickedCreate = false;
+
+  if (customId.startsWith('ticket_create_category_')) {
+    const idx = parseInt(customId.replace('ticket_create_category_', ''));
+    const conf = await TicketConfig.findOne({ guildId: guild.id });
+    if (conf && conf.panelCategories && conf.panelCategories[idx]) {
+      categoryOption = conf.panelCategories[idx];
+      clickedCreate = true;
+    }
+  }
+  else if (interaction.isStringSelectMenu() && customId === 'ticket_create_select') {
+    const val = interaction.values[0];
+    if (val.startsWith('ticket_category_')) {
+      const idx = parseInt(val.replace('ticket_category_', ''));
+      const conf = await TicketConfig.findOne({ guildId: guild.id });
+      if (conf && conf.panelCategories && conf.panelCategories[idx]) {
+        categoryOption = conf.panelCategories[idx];
+        clickedCreate = true;
+      }
+    }
+  }
+  else if (customId === 'ticket_create_btn' || customId === 'ticket_create') {
+    clickedCreate = true;
+  }
+
+  if (clickedCreate) {
+    await executeTicketCreation(interaction, user, guild, categoryOption);
+    return;
   }
 
   // 2. IN-TICKET QUICK BUTTON ACTIONS
@@ -499,11 +765,16 @@ async function handleTicketActionButtons(interaction, client) {
   }
 }
 
-async function executeTicketCreation(interaction, creator, guild) {
+async function executeTicketCreation(interaction, creator, guild, categoryOption) {
   try {
     const conf = await TicketConfig.findOne({ guildId: guild.id });
-    if (!conf || !conf.categoryId) {
+    if (!conf) {
       return interaction.reply({ embeds: [error('The ticket system is not configured. Admin must run `r?ticket setup`.')], ephemeral: true });
+    }
+
+    let targetCategoryId = categoryOption?.categoryId || conf.categoryId;
+    if (!targetCategoryId) {
+      return interaction.reply({ embeds: [error('No creation category has been configured for support tickets.')], ephemeral: true });
     }
 
     // Limit check
@@ -518,8 +789,9 @@ async function executeTicketCreation(interaction, creator, guild) {
     const count = await TicketInstance.countDocuments({ guildId: guild.id });
     const caseId = `#${1000 + count + 1}`;
 
+    const suffixName = categoryOption ? categoryOption.name.toLowerCase().replace(/\s+/g, '-') : creator.username;
     const channelName = conf.consistentChannelName 
-      ? `ticket-${creator.username}`.toLowerCase()
+      ? `ticket-${suffixName}`.toLowerCase()
       : `ticket-${caseId.replace('#', '')}`;
 
     await interaction.reply({ content: '🎫 Creating your ticket channel...', ephemeral: true });
@@ -542,8 +814,15 @@ async function executeTicketCreation(interaction, creator, guild) {
     ];
 
     // Grant Support Roles permissions
-    if (conf.supportRoleIds && conf.supportRoleIds.length > 0) {
-      conf.supportRoleIds.forEach(roleId => {
+    const targetRoles = [];
+    if (categoryOption && categoryOption.roleId) {
+      targetRoles.push(categoryOption.roleId);
+    } else if (conf.supportRoleIds && conf.supportRoleIds.length > 0) {
+      conf.supportRoleIds.forEach(roleId => targetRoles.push(roleId));
+    }
+
+    if (targetRoles.length > 0) {
+      targetRoles.forEach(roleId => {
         overrides.push({
           id: roleId,
           allow: [
@@ -560,7 +839,7 @@ async function executeTicketCreation(interaction, creator, guild) {
     const ticketChannel = await guild.channels.create({
       name: channelName,
       type: ChannelType.GuildText,
-      parent: conf.categoryId,
+      parent: targetCategoryId,
       permissionOverwrites: overrides
     });
 
@@ -575,7 +854,7 @@ async function executeTicketCreation(interaction, creator, guild) {
 
     // Welcome embed with quick action buttons
     const welcomeEmbed = info(
-      `Welcome ${creator} to your support ticket.\n` +
+      `Welcome ${creator} to your support ticket${categoryOption ? ` for **${categoryOption.name}**` : ''}.\n` +
       `Our staff team will assist you shortly.\n\n` +
       `Use the buttons below to perform quick actions:`,
       `🎫 Ticket Welcome Panel`
@@ -590,8 +869,8 @@ async function executeTicketCreation(interaction, creator, guild) {
 
     await ticketChannel.send({ embeds: [welcomeEmbed], components: [actionRow] });
 
-    if (conf.roleMention && conf.supportRoleIds && conf.supportRoleIds.length > 0) {
-      const mentionStr = conf.supportRoleIds.map(id => `<@&${id}>`).join(' ');
+    if (conf.roleMention && targetRoles.length > 0) {
+      const mentionStr = targetRoles.map(id => `<@&${id}>`).join(' ');
       await ticketChannel.send({ content: `🔔 Support Alert: ${mentionStr}` }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
     }
 
@@ -609,7 +888,7 @@ async function executeTicketCreation(interaction, creator, guild) {
 
 async function runCreate(context, isInteraction) {
   const author = isInteraction ? context.user : context.author;
-  await executeTicketCreation(context, author, context.guild);
+  await executeTicketCreation(context, author, context.guild, null);
 }
 
 async function runClaim(context, staffUser, isInteraction) {
@@ -638,11 +917,12 @@ async function runClaim(context, staffUser, isInteraction) {
       { upsert: true }
     );
 
-    // Apply exclusive overrides if desired (restrict write to creator and claimer staff)
+    // Move claimed ticket to other category if configured
     const conf = await TicketConfig.findOne({ guildId: guild.id });
-    if (conf && conf.givePermissionsAuto) {
-      // Overwrite permissions for other support roles if claimable restricts write
-      // To keep it simple: inform the room
+    if (conf && conf.claimedCategoryId) {
+      await channel.setParent(conf.claimedCategoryId).catch(err => {
+        logger.error(`Failed to move channel ${channel.name} to category ${conf.claimedCategoryId}:`, err);
+      });
     }
 
     const claimEmbed = success(`This ticket has been claimed by **${staffUser.tag}** (${staffUser}).\nThey will now assist you.`, `👤 Ticket Claimed`);
