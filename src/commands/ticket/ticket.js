@@ -29,15 +29,6 @@ module.exports = {
     .addSubcommand(sub => sub
       .setName('setup')
       .setDescription('Set up the ticket panels.')
-      .addStringOption(opt => opt
-        .setName('category-type')
-        .setDescription('Render category options as buttons or a select menu')
-        .setRequired(true)
-        .addChoices(
-          { name: 'Button', value: 'button' },
-          { name: 'Select Menu (Premium Preview)', value: 'dropdown' }
-        )
-      )
     )
     .addSubcommand(sub => sub.setName('config').setDescription('Access interactive configuration menu.'))
     .addSubcommand(sub => sub.setName('create').setDescription('Create a ticket manually.'))
@@ -85,9 +76,7 @@ module.exports = {
 
     // Route Prefix commands
     if (sub === 'setup') {
-      const typeArg = args[1]?.toLowerCase();
-      const panelType = (typeArg === 'select' || typeArg === 'dropdown' || typeArg === 'select menu') ? 'dropdown' : 'button';
-      return startSetup(message, message.author, panelType, false);
+      return startSetup(message, message.author, false);
     }
     if (sub === 'config') return startConfig(message, false);
     if (sub === 'create') return runCreate(message, false);
@@ -142,8 +131,7 @@ module.exports = {
     }
 
     if (sub === 'setup') {
-      const panelType = interaction.options.getString('category-type') || 'button';
-      return startSetup(interaction, interaction.user, panelType, true);
+      return startSetup(interaction, interaction.user, true);
     }
     if (sub === 'config') return startConfig(interaction, true);
     if (sub === 'create') return runCreate(interaction, true);
@@ -193,60 +181,84 @@ module.exports = {
 // SETUP PANEL BUILDER (MATCHING USER IMAGES)
 // ==========================================
 
-async function startSetup(context, user, panelType, isInteraction) {
+async function startSetup(context, user, isInteraction) {
   const key = `${context.guild.id}:${user.id}`;
   
   const session = {
-    panelType,
+    panelType: 'button',
     embedData: {
-      title: '🎫 Support Ticket Panel',
-      description: 'Select an option below to open a support ticket.',
+      description: 'Please enter the requested information as prompted. This embed will automatically populate with the information you provide.',
       color: 0x5865F2,
     },
     panelCategories: [],
+    claimedCategoryId: null,
     message: null,
     currentCollector: null
   };
 
   activeSetupSessions.set(key, session);
 
-  const setupEmbed = getSetupPreviewEmbed(session);
-  const rows = getSetupScreenButtons(panelType);
+  const previewEmbed = createEmbed(session.embedData);
+  const rows = getSetupScreenButtons();
 
   if (isInteraction) {
-    const msg = await context.reply({ embeds: [setupEmbed], components: rows, fetchReply: true });
+    const msg = await context.reply({ embeds: [previewEmbed], components: rows, fetchReply: true });
     session.message = msg;
   } else {
-    const msg = await context.reply({ embeds: [setupEmbed], components: rows });
+    const msg = await context.reply({ embeds: [previewEmbed], components: rows });
     session.message = msg;
   }
 }
 
-function getSetupPreviewEmbed(session) {
+function getSetupScreenButtons() {
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_setup_title').setLabel('Title').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('ticket_setup_desc').setLabel('Description').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('ticket_setup_color').setLabel('Color').setStyle(ButtonStyle.Primary)
+  );
+
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_setup_image').setLabel('Image').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ticket_setup_thumbnail').setLabel('Thumbnail').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ticket_setup_json').setLabel('JSON').setStyle(ButtonStyle.Success)
+  );
+
+  const row3 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_setup_save').setLabel('Save & Set Category').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('ticket_setup_exit').setLabel('Exit').setStyle(ButtonStyle.Danger)
+  );
+
+  return [row1, row2, row3];
+}
+
+function getCategoriesDashboardEmbed(session) {
   const embed = createEmbed(session.embedData);
   embed.setTitle('🎫 Ticket Categories Setup');
   
-  let desc = 'Use the buttons below to add categories.\n\n**Categories Configured:**\n';
+  let desc = `Configure the category options for your ticket panel.\n` +
+             `• **Panel Type:** \`${session.panelType === 'dropdown' ? 'Select Menu' : 'Buttons'}\`\n` +
+             `• **Claimed Category ID:** ${session.claimedCategoryId ? `<#${session.claimedCategoryId}> (\`${session.claimedCategoryId}\`)` : '`None (Not Relocated)`'}\n\n` +
+             `**Categories Configured:**\n`;
+             
   if (session.panelCategories.length === 0) {
-    desc += '❌ No categories configured yet.';
+    desc += '❌ No categories configured yet. Click **Add Option** below.';
   } else {
     session.panelCategories.forEach((cat, idx) => {
       const emojiStr = cat.emoji ? `${cat.emoji} ` : '';
-      const roleStr = cat.roleId ? `<@&${cat.roleId}>` : '`Global Default`';
-      const categoryStr = cat.categoryId ? `<#${cat.categoryId}>` : '`Global Default`';
-      desc += `**${idx + 1}.** ${emojiStr}**${cat.name}**\n   └ Role: ${roleStr} | Category: ${categoryStr}\n`;
+      const roleStr = cat.roleId ? `<@&${cat.roleId}> (\`${cat.roleId}\`)` : '`Global Default`';
+      const categoryStr = cat.categoryId ? `<#${cat.categoryId}> (\`${cat.categoryId}\`)` : '`Global Default`';
+      desc += `**${idx + 1}.** ${emojiStr}**${cat.name}**\n   └ Support Role: ${roleStr} | Open Category: ${categoryStr}\n`;
     });
   }
   embed.setDescription(desc);
   return embed;
 }
 
-function getSetupScreenButtons(panelType) {
-  const label = panelType === 'dropdown' ? 'Add Select Menu Option' : 'Add Button Option';
-  
+function getCategoriesDashboardButtons() {
   const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('ticket_setup_add_cat').setLabel(label).setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('ticket_setup_remove_cat').setLabel('Remove Category').setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId('ticket_setup_add_cat').setLabel('Add Option').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('ticket_setup_remove_cat').setLabel('Remove Category').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ticket_setup_set_claimed').setLabel('Set Claimed Cat').setStyle(ButtonStyle.Primary)
   );
 
   const row2 = new ActionRowBuilder().addComponents(
@@ -264,14 +276,24 @@ async function handleSetupButtons(interaction, client) {
 
   if (!session || !customId.startsWith('ticket_setup_')) return;
 
-  if (customId === 'ticket_setup_add_cat') {
-    await promptAddCategory(interaction, session);
+  // --- EMBED BUILDER ACTIONS ---
+  if (customId === 'ticket_setup_title') {
+    await promptSetupInput(interaction, session, 'title', 'Enter title in the chat within next 10 minutes.');
   }
-  else if (customId === 'ticket_setup_remove_cat') {
-    await promptRemoveCategory(interaction, session);
+  else if (customId === 'ticket_setup_desc') {
+    await promptSetupInput(interaction, session, 'desc', 'Enter description in the chat within next 10 minutes.');
   }
-  else if (customId === 'ticket_setup_finish') {
-    await promptFinishPanel(interaction, session);
+  else if (customId === 'ticket_setup_color') {
+    await promptSetupInput(interaction, session, 'color', 'Enter color (Hex code) in the chat within next 10 minutes.');
+  }
+  else if (customId === 'ticket_setup_image') {
+    await promptSetupInput(interaction, session, 'image', 'Enter image URL in the chat within next 10 minutes.');
+  }
+  else if (customId === 'ticket_setup_thumbnail') {
+    await promptSetupInput(interaction, session, 'thumbnail', 'Enter thumbnail URL in the chat within next 10 minutes.');
+  }
+  else if (customId === 'ticket_setup_json') {
+    await promptSetupInput(interaction, session, 'json', 'Enter full panel embed JSON in the chat within next 10 minutes.');
   }
   else if (customId === 'ticket_setup_exit') {
     if (session.currentCollector) session.currentCollector.stop('exit');
@@ -281,6 +303,59 @@ async function handleSetupButtons(interaction, client) {
       components: []
     });
   }
+  // --- TRANSITION TO TYPE CHOICE ---
+  else if (customId === 'ticket_setup_save') {
+    if (session.currentCollector) session.currentCollector.stop('type_choice');
+    const embed = createEmbed(session.embedData);
+    embed.setTitle('Select Option Type');
+    embed.setDescription('Choose how you want the ticket categories to be presented on the panel:');
+    
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('ticket_setup_type_button').setLabel('Button Panel').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('ticket_setup_type_dropdown').setLabel('Select Menu').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('ticket_setup_type_cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger)
+    );
+    
+    await interaction.update({
+      embeds: [embed],
+      components: [row]
+    });
+  }
+  
+  // --- TYPE CHOICE HANDLERS ---
+  else if (customId === 'ticket_setup_type_button' || customId === 'ticket_setup_type_dropdown') {
+    session.panelType = customId === 'ticket_setup_type_dropdown' ? 'dropdown' : 'button';
+    
+    const embed = getCategoriesDashboardEmbed(session);
+    const rows = getCategoriesDashboardButtons();
+    
+    await interaction.update({
+      embeds: [embed],
+      components: rows
+    });
+  }
+  else if (customId === 'ticket_setup_type_cancel') {
+    const embed = createEmbed(session.embedData);
+    const rows = getSetupScreenButtons();
+    await interaction.update({
+      embeds: [embed],
+      components: rows
+    });
+  }
+
+  // --- CATEGORIES DASHBOARD ACTIONS ---
+  else if (customId === 'ticket_setup_add_cat') {
+    await promptAddCategory(interaction, session);
+  }
+  else if (customId === 'ticket_setup_remove_cat') {
+    await promptRemoveCategory(interaction, session);
+  }
+  else if (customId === 'ticket_setup_set_claimed') {
+    await promptSetupClaimedCategory(interaction, session);
+  }
+  else if (customId === 'ticket_setup_finish') {
+    await promptFinishPanel(interaction, session);
+  }
   else if (customId === 'ticket_setup_deploy_here') {
     await deployPanelToChannel(interaction, session, interaction.channel);
   }
@@ -288,13 +363,133 @@ async function handleSetupButtons(interaction, client) {
     await promptDeployOtherChannel(interaction, session);
   }
   else if (customId === 'ticket_setup_deploy_cancel') {
-    const setupEmbed = getSetupPreviewEmbed(session);
-    const rows = getSetupScreenButtons(session.panelType);
+    const embed = getCategoriesDashboardEmbed(session);
+    const rows = getCategoriesDashboardButtons();
     await interaction.update({
-      embeds: [setupEmbed],
+      embeds: [embed],
       components: rows
     });
   }
+}
+
+async function promptSetupInput(interaction, session, fieldName, promptMessage) {
+  if (session.currentCollector) {
+    session.currentCollector.stop('new_prompt');
+  }
+
+  await interaction.reply({ content: `💬 ${promptMessage}`, ephemeral: true });
+
+  const channel = interaction.channel;
+  const filter = m => m.author.id === interaction.user.id;
+  const collector = channel.createMessageCollector({ filter, time: 600000 });
+  
+  session.currentCollector = collector;
+
+  collector.on('collect', async (msg) => {
+    try {
+      const content = msg.content.trim();
+
+      if (channel.permissionsFor(interaction.guild.members.me).has('ManageMessages')) {
+        await msg.delete().catch(() => null);
+      }
+
+      if (content.toLowerCase() === 'cancel') {
+        collector.stop('cancelled');
+        return;
+      }
+
+      if (fieldName === 'title') {
+        session.embedData.title = content;
+      } 
+      else if (fieldName === 'desc') {
+        session.embedData.description = content;
+      } 
+      else if (fieldName === 'color') {
+        let cleanColor = content;
+        if (cleanColor.startsWith('#')) {
+          cleanColor = parseInt(cleanColor.replace('#', ''), 16);
+        } else if (!isNaN(parseInt(cleanColor))) {
+          cleanColor = parseInt(cleanColor);
+        }
+        session.embedData.color = cleanColor;
+      } 
+      else if (fieldName === 'image') {
+        session.embedData.image = content;
+      } 
+      else if (fieldName === 'thumbnail') {
+        session.embedData.thumbnail = content;
+      } 
+      else if (fieldName === 'json') {
+        try {
+          const parsed = JSON.parse(content);
+          session.embedData = { ...session.embedData, ...parsed };
+        } catch (e) {
+          await channel.send({ embeds: [error('Invalid JSON structure.')] }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
+          collector.stop('invalid_json');
+          return;
+        }
+      }
+
+      // Update the preview message
+      const updatedEmbed = createEmbed(session.embedData);
+      await session.message.edit({ embeds: [updatedEmbed] }).catch(() => null);
+
+      await channel.send({ content: `✅ **${fieldName.toUpperCase()}** updated.` }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+      collector.stop('collected');
+
+    } catch (err) {
+      console.error(`Error collecting setup input for ${fieldName}:`, err);
+    }
+  });
+
+  collector.on('end', (collected, reason) => {
+    if (reason === 'time') {
+      channel.send({ content: `⚠️ Timeout: Input session expired.` }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
+    }
+  });
+}
+
+async function promptSetupClaimedCategory(interaction, session) {
+  if (session.currentCollector) {
+    session.currentCollector.stop('new_prompt');
+  }
+
+  await interaction.reply({ content: '💬 Enter the Category ID where claimed tickets should be moved (Type `disable` to turn off).', ephemeral: true });
+
+  const channel = interaction.channel;
+  const filter = m => m.author.id === interaction.user.id;
+  const collector = channel.createMessageCollector({ filter, max: 1, time: 300000 });
+  session.currentCollector = collector;
+
+  collector.on('collect', async (msg) => {
+    const content = msg.content.trim();
+    if (channel.permissionsFor(interaction.guild.members.me).has('ManageMessages')) {
+      await msg.delete().catch(() => null);
+    }
+
+    if (content.toLowerCase() === 'cancel') {
+      collector.stop('cancelled');
+      return;
+    }
+
+    if (content.toLowerCase() === 'disable') {
+      session.claimedCategoryId = null;
+    } else {
+      const category = await interaction.guild.channels.fetch(content).catch(() => null);
+      if (!category || category.type !== ChannelType.GuildCategory) {
+        await channel.send({ content: '❌ Invalid Category ID. Please specify a valid Guild Category ID.' }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+        return;
+      }
+      session.claimedCategoryId = category.id;
+    }
+
+    collector.stop('completed');
+    
+    const embed = getCategoriesDashboardEmbed(session);
+    await session.message.edit({ embeds: [embed] }).catch(() => null);
+    
+    await channel.send({ content: '✅ Claimed category updated.' }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
+  });
 }
 
 async function promptAddCategory(interaction, session) {
@@ -367,7 +562,7 @@ async function promptAddCategory(interaction, session) {
         session.panelCategories.push(newCat);
         collector.stop('completed');
 
-        const updatedEmbed = getSetupPreviewEmbed(session);
+        const updatedEmbed = getCategoriesDashboardEmbed(session);
         await session.message.edit({ embeds: [updatedEmbed] }).catch(() => null);
 
         await channel.send({ content: `✅ Added category option **${newCat.name}**!` }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
@@ -415,7 +610,7 @@ async function promptRemoveCategory(interaction, session) {
     const removed = session.panelCategories.splice(idx, 1)[0];
     collector.stop('removed');
 
-    const updatedEmbed = getSetupPreviewEmbed(session);
+    const updatedEmbed = getCategoriesDashboardEmbed(session);
     await session.message.edit({ embeds: [updatedEmbed] }).catch(() => null);
 
     await channel.send({ content: `✅ Removed category option **${removed.name}**.` }).then(m => setTimeout(() => m.delete().catch(() => null), 3000));
