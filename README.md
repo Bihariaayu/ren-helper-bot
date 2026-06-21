@@ -1,6 +1,6 @@
 # ☁️ Ren Helper - Advanced Discord Utility Bot
 
-Ren Helper is a premium, enterprise-level Discord bot built specifically for the **Ren Cloud** ecosystem. It provides advanced invite tracking, server boost management, auto-responders, an interactive embed builder, owner-only administrative tools, and an advanced support ticket system.
+Ren Helper is a premium, enterprise-level Discord bot built specifically for the **Ren Cloud** ecosystem. It provides automated payment verification, giveaway management, advanced invite tracking, server boost management, auto-responders, an interactive embed builder, and owner-only administrative tools.
 
 > 🛠️ **Developer:** Made by **Bihariaayu_**
 > 💬 **Support Discord:** [discord.rencloud.dpdns.org](https://discord.rencloud.dpdns.org)
@@ -12,8 +12,8 @@ Featuring a professional hosting company aesthetic, the bot supports both prefix
 
 ## 📌 Prefix Guide
 * **📊 Invite System Commands Prefix:** `-i` (e.g. `-i invites`, `-i stats`)
-* **⚙️ Utility & Management Commands Prefix:** `r?` (e.g. `r?help`, `r?ticket setup`, `r?ban`)
-* **💎 Slash Commands:** `/` (e.g. `/invites`, `/ticket setup`)
+* **⚙️ Utility & Management Commands Prefix:** `r?` (e.g. `r?help`, `r?upi`, `r?ban`)
+* **💎 Slash Commands:** `/` (e.g. `/invites`, `/upi`, `/help`)
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -33,24 +33,31 @@ Featuring a professional hosting company aesthetic, the bot supports both prefix
    - High-fidelity UI using buttons and modals to create rich embed designs without code.
    - Save and send custom embeds to specific channels or via webhooks.
 
-4. **Advanced Ticket System**
-   - **Ticket Panels**: Deploy button-based panels for support tickets.
-   - **Toggles Configuration**: Tweak permissions, channel naming conventions, limits, and claimable statuses using a visual config menu.
-   - **Support Actions**: Claim, unclaim, transfer, rename, add/remove members, and close tickets.
-   - **Detailed Logging**: Sends comprehensive log details and HTML transcripts to the logs channel upon closure.
-   - **Satisfaction Surveys**: Prompts creators in DMs with star buttons (⭐ to ⭐⭐⭐⭐⭐) to rate support quality.
+4. **Automated Payment Verification System (Ren Money)**
+   - QR code generation and deep links for UPI (`r?upi`), PayPal (`r?paypal`), and Cryptopay (`r?cryptopay`).
+   - Integrated `📸 Upload Payment Proof` buttons that launch Discord modals for amount, transaction ID, and notes.
+   - Automatic attachment capturing that deletes original attachments from the channel for client privacy.
+   - Multi-step security gates checking for duplicate screenshot files and double submissions under active Payment IDs.
+   - Professional logging embeds routed to designated staff channels with quick-action approval (`✅ Approve`) and rejection (`❌ Reject`) buttons.
+   - Automatic DM notifications detailing verification success or rejection reasons.
 
-5. **Server Boost Tracker**
+5. **Giveaway System**
+   - Reaction and Button based giveaway entries.
+   - Advanced qualification parameters including role whitelists and net invite requirements.
+   - Weighted entry multipliers for specific roles.
+   - Auto-scheduler running every 30s for automatic resolution, picker, and announcements.
+
+6. **Server Boost Tracker**
    - Welcomes boosters and displays boost count/server level.
    - Automatic Booster Role: Automatically grants a custom role when a user boosts and removes it when it expires.
    - Booster leaderboard and statistics.
 
-6. **Owner-Only Global DM System**
+7. **Owner-Only Global DM System**
    - Whitelisted DM broadcast tool that sends message/embed to all server members.
    - Includes real-time progress monitoring, rate-limit protection (1.5s delay), and an interactive cancel button.
 
-7. **Premium Styling & UI**
-   - Beautiful embed designs themed with Ren Cloud Red (`#E74C3C`) and Green (`#2ECC71`).
+8. **Premium Styling & UI**
+   - Beautiful embed designs themed with Ren Cloud Red (`#E74C3C`), Green (`#2ECC71`), and Dark theme.
    - Consistent footer: `☁️ Ren Helper • Ren Cloud`.
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -71,17 +78,16 @@ ren-helper/
 │   │       ├── AutoResponse.js
 │   │       ├── CustomEmbed.js
 │   │       ├── BoosterStats.js
-│   │       ├── TicketConfig.js
-│   │       ├── TicketInstance.js
-│   │       ├── TicketReview.js
-│   │       └── TicketStaffStats.js
+│   │       ├── Payment.js
+│   │       ├── PaymentConfig.js
+│   │       └── Giveaway.js
 │   ├── handlers/
 │   │   ├── commandHandler.js     # Prefix & Slash Command Loader
 │   │   └── eventHandler.js       # Discord Events Loader
 │   ├── utils/
 │   │   ├── inviteCache.js        # In-Memory Invite Tracker Cache
 │   │   ├── embedBuilder.js       # Ren Cloud Embed Visual Themes
-│   │   ├── transcriptGenerator.js # HTML Transcript Compiler
+│   │   ├── giveawayManager.js    # Giveaway Schedulers & Winner Pickers
 │   │   └── logger.js             # Logging Utility
 │   ├── commands/                 # Bot Commands (Prefix & Slash)
 │   │   ├── config/               # Setup & configuration
@@ -89,11 +95,12 @@ ren-helper/
 │   │   ├── autoresponse/         # Auto responders
 │   │   ├── embed/                # Embed Builder
 │   │   ├── booster/              # Boost tracking
-│   │   ├── ticket/               # Support tickets
+│   │   ├── money/                # Payment QRs, configs, conversions (Ren Money)
+│   │   ├── giveaway/             # Giveaway commands
 │   │   └── owner/                # DM broadcast (Owner only)
 │   └── events/                   # Discord Events
 │       ├── client/               # ready, interactionCreate
-│       ├── guild/                # guildMemberAdd, messageCreate, etc.
+│       ├── guild/                # guildMemberAdd, messageReactionAdd, etc.
 │       └── logs/                 # Logging events handler
 ├── .env.example                  # Environment Variables Template
 ├── .env                          # Configuration Variables
@@ -112,6 +119,7 @@ ren-helper/
   - `Guild Members` (Server Members Intent)
   - `Message Content` (Message Content Intent)
   - `Guild Invites`
+  - `Guild Message Reactions`
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -166,6 +174,7 @@ Prefix commands for Invite/Booster tracking use `-i`, and all other commands use
 | :--- | :--- | :--- | :--- | :--- |
 | **Config** | `r?config` | `/config` | Views the current server settings | Administrator |
 | **Setup** | `r?setup <args>` | `/setup <subcommand>` | Set log/invite/welcome/boost channels & booster role | Administrator |
+| **Help** | `r?help` | `/help` | Interactive dropdown menu to view help resources | Everyone |
 
 ### 📊 Invite Tracking Commands
 | Command | Prefix Usage | Slash Usage | Description | Permissions |
@@ -196,26 +205,29 @@ Prefix commands for Invite/Booster tracking use `-i`, and all other commands use
 | **Send Embed** | `r?embed send <id> #chan`| `/embed send <id> <chan>`| Sends a saved custom embed to a channel | Authorized |
 | **Delete Embed**| `r?embed delete <id>` | *N/A* | Deletes a saved custom embed from the database | Authorized |
 
-### 🎫 Ticket System Commands
+### 💳 Payment Verification Commands (Ren Money)
 | Command | Prefix Usage | Slash Usage | Description | Permissions |
 | :--- | :--- | :--- | :--- | :--- |
-| **Ticket Setup** | `r?ticket setup` | `/ticket setup` | Interactive button panel configuration for tickets | Administrator |
-| **Ticket Config**| `r?ticket config` | `/ticket config` | Access toggle configuration panel (red/green buttons) | Administrator |
-| **Set Ticket Logs**| `r?setticketlogs #c`| `/setticketlogs <c>`| Set the ticket log channel for transcripts/close logs | Administrator |
-| **Ticket Logs** | `r?ticketlogs` | `/ticketlogs` | View the currently configured ticket log channel | Administrator |
-| **Create Ticket**| `r?ticket create` | `/ticket create` | Manually open a new ticket channel for yourself | Everyone |
-| **Close Ticket** | `r?ticket close [r]`| `/ticket close [r]` | Initiates close sequence with reason and transcript | Authorized |
-| **Claim Ticket** | `r?ticket claim` | `/ticket claim` | Claim the ticket to assist the creator | Support Staff |
-| **Unclaim Ticket**| `r?ticket unclaim`| `/ticket unclaim`| Release a claimed ticket | Support Staff |
-| **Transfer Ticket**| `r?ticket transfer @s`| `/ticket transfer <s>`| Reassign ticket to another staff member | Support Staff |
-| **Add Member** | `r?ticket add @u` | `/ticket add <u>` | Give a user view and write permissions in ticket | Support Staff |
-| **Remove Member**| `r?ticket remove @u`| `/ticket remove <u>`| Revoke a user's permissions in the ticket | Support Staff |
-| **Rename Ticket**| `r?ticket rename <n>`| `/ticket rename <n>`| Rename the ticket channel | Support Staff |
-| **Transcript** | `r?ticket transcript`| `/ticket transcript`| Generate and send current ticket HTML transcript | Support Staff |
-| **Ticket Info** | `r?ticket info` | `/ticket info` | Show metadata, creator, and staff info of ticket | Everyone |
-| **Ticket Stats** | `r?ticket stats` | `/ticket stats` | View general ticket counts (open, closed, claimed) | Everyone |
-| **Leaderboard** | `r?ticket leaderboard`| `/ticket leaderboard`| View top support staff ticket rankings | Everyone |
-| **Reviews** | `r?ticket reviews` | `/ticket reviews` | View user satisfaction ratings (1-5 stars) | Everyone |
+| **UPI** | `r?upi [amount]` | `/upi [amount]` | Generate a UPI payment QR and links | Everyone |
+| **PayPal** | `r?paypal [amount]` | `/paypal [amount]` | Generate a PayPal.me QR and links | Everyone |
+| **Crypto Payment**| `r?cryptopay <coin> <amt>`| `/cryptopay <coin> <amt>`| Generate crypto address QR and convert to USD | Everyone |
+| **Setup UPI** | `r?setupupi <id> [name]`| `/setupupi <id> [name]`| Configure merchant UPI ID and brand name | Administrator |
+| **Setup PayPal** | `r?setuppaypal <user>` | `/setuppaypal <user>` | Configure PayPal.me merchant handle | Administrator |
+| **Setup Crypto** | `r?setupcrypto <c> <addr>`| `/setupcrypto <c> <addr>`| Configure crypto wallet address | Administrator |
+| **Set Pay Channel**| `r?setpaymentchannel #c`| `/paymentchannel set` | Set channel for payment validation reviews | Administrator |
+| **Pay Channel** | `r?paymentchannel` | `/paymentchannel view` | View the currently configured payment channel | Administrator |
+| **Remove Pay Chan**| `r?removepaymentchannel`| `/paymentchannel remove`| Disables the payment channel | Administrator |
+| **Payments** | `r?payments` / `r?paymenthistory`| `/payments history` | View submission history of payments | Everyone / Admin |
+| **Payment Info** | `r?paymentinfo <id>` | `/payments info <id>` | Show detailed validation info for a payment | Everyone / Admin |
+| **Payment Stats** | `r?paymentstats` | `/paymentstats` | View financial analytics and approval counts | Manage Server |
+
+### 🎉 Giveaway Commands
+| Command | Prefix Usage | Slash Usage | Description | Permissions |
+| :--- | :--- | :--- | :--- | :--- |
+| **Start GA** | `r?giveaway start <dur> <winners> <prize>` | `/ga start` | Starts a giveaway with filters & role multipliers | Manage Server |
+| **End GA** | `r?giveaway end <msgId>` | `/ga end` | Force-ends an active giveaway and picks winners | Manage Server |
+| **Reroll GA** | `r?giveaway reroll <msgId>` | `/ga reroll` | Selects a new winner from the participants pool | Manage Server |
+| **Delete GA** | `r?giveaway delete <msgId>` | *N/A* | Deletes a giveaway and its message | Manage Server |
 
 ### 🚀 Booster Tracking Commands
 | Command | Prefix Usage | Slash Usage | Description | Permissions |
@@ -242,7 +254,7 @@ Prefix commands for Invite/Booster tracking use `-i`, and all other commands use
 | **Lock** | `r?lock [reason]` | `/lock [reason]` | Locks the current channel | Manage Channels |
 | **Unlock** | `r?unlock [reason]` | `/unlock [reason]` | Unlocks the current channel | Manage Channels |
 | **Give Role**| `r?giverole @user @role` | `/giverole <user> <role>` | Grants a role to a member | Manage Roles |
-| **Remove Role**| `r?removerole @user @role` | `/removerole <user> <role>`| Removes a role from a member | Manage Roles |
+| **Remove Role**| `r?removerole @user @role` | `/removerole <user> <role>` | Removes a role from a member | Manage Roles |
 | **Nickname** | `r?nickname @user [nick]` | `/nickname <user> [nick]` | Sets or resets a user nickname | Manage Nicknames |
 | **User Info**| `r?userinfo [@user]` | `/userinfo [user]` | Displays detailed user profile | Everyone |
 
