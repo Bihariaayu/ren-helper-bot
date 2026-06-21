@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const PaymentConfig = require('../../database/models/PaymentConfig');
-const { createEmbed, success, error } = require('../../utils/embedBuilder');
+const { createEmbed, error } = require('../../utils/embedBuilder');
 
 const cryptoMap = {
   'BTC': { id: 'bitcoin', name: 'Bitcoin', logo: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png' },
@@ -34,28 +34,31 @@ module.exports = {
         { name: 'DOGE (Dogecoin)', value: 'DOGE' }
       )
     )
-    .addNumberOption(opt => opt.setName('amount').setDescription('Crypto amount requested').setRequired(true)),
+    .addNumberOption(opt => opt.setName('amount').setDescription('Crypto amount requested').setRequired(true))
+    .addUserOption(opt => opt.setName('user').setDescription('Generate QR for a specific user (optional)').setRequired(false)),
 
   async executePrefix(message, args, client) {
     const symbol = args[0]?.toUpperCase();
     const amount = parseFloat(args[1]);
+    const targetUser = message.mentions.users.first() || null;
 
     if (!symbol || !cryptoMap[symbol] || isNaN(amount) || amount <= 0) {
-      return message.reply({ embeds: [error('Invalid arguments. Usage: `r?cryptopay <coin> <amount>`\nExample: `r?cryptopay BTC 0.005`')] });
+      return message.reply({ embeds: [error('Invalid arguments. Usage: `r?cryptopay <coin> <amount> [@user]`\nExample: `r?cryptopay BTC 0.005 @Ayu`')] });
     }
 
-    await generateCryptoRequest(message, symbol, amount, false);
+    await generateCryptoRequest(message, symbol, amount, false, message.author, targetUser);
   },
 
   async executeSlash(interaction, client) {
     const symbol = interaction.options.getString('coin').toUpperCase();
     const amount = interaction.options.getNumber('amount');
+    const targetUser = interaction.options.getUser('user') || null;
 
-    await generateCryptoRequest(interaction, symbol, amount, true);
+    await generateCryptoRequest(interaction, symbol, amount, true, interaction.user, targetUser);
   }
 };
 
-async function generateCryptoRequest(context, symbol, amount, isInteraction) {
+async function generateCryptoRequest(context, symbol, amount, isInteraction, requester, targetUser) {
   try {
     const guildId = context.guildId || context.guild.id;
     const config = await PaymentConfig.findOne({ guildId });
@@ -74,7 +77,7 @@ async function generateCryptoRequest(context, symbol, amount, isInteraction) {
       await context.channel.sendTyping();
     }
 
-    // Fetch coin price to perform USD conversion
+    // Fetch coin price for USD conversion
     let usdValueText = 'Calculating...';
     try {
       const priceRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinData.id}&vs_currencies=usd`);
@@ -92,13 +95,16 @@ async function generateCryptoRequest(context, symbol, amount, isInteraction) {
     }
 
     const paymentId = 'PM-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-    
-    // Generate QR Code URL of the wallet address
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(address)}`;
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&color=E74C3C&bgcolor=ffffff&data=${encodeURIComponent(address)}`;
+
+    const targetLine = targetUser
+      ? `\n> 🎯 **Generated for:** ${targetUser} (\`${targetUser.username}\`)\n> 🧑‍💼 **Requested by:** ${requester} (\`${requester.username}\`)`
+      : '';
 
     const payEmbed = createEmbed({
-      color: 'green',
-      title: `💸 Ren Money ${coinData.name} Billing`,
+      color: 'red',
+      title: `💸 Ren Money — ${coinData.name} Payment`,
+      description: `Scan the QR code or copy the wallet address below.${targetLine}`,
       image: qrUrl,
       thumbnail: coinData.logo,
       fields: [
@@ -108,22 +114,25 @@ async function generateCryptoRequest(context, symbol, amount, isInteraction) {
         { name: '📦 Wallet Address', value: `\`${address}\``, inline: false },
         {
           name: '⚡ Payment Instructions',
-          value: `1. Scan the QR code or copy the wallet address above.\n` +
+          value: `1. Scan the QR or copy the wallet address above.\n` +
                  `2. Send the exact amount from your crypto wallet.\n` +
-                 `3. Wait for the transaction to broadcast and capture a **screenshot**.\n` +
-                 `4. Click **Confirm Payment** below to submit.`,
+                 `3. Wait for broadcast and take a **screenshot**.\n` +
+                 `4. Click **📸 Confirm Payment** below to submit.`,
           inline: false
         }
       ],
-      footer: 'Ren Money - Premium Payment Solutions',
+      footer: 'Ren Money - Secure Payment Solutions',
       timestamp: true
     });
 
+    const targetId = targetUser ? targetUser.id : 'none';
+    const requesterId = requester.id;
+
     const actionRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`pay_proof_upload:${paymentId}:${symbol}:${amount}`)
+        .setCustomId(`pay_proof_upload:${paymentId}:${symbol}:${amount}:${targetId}:${requesterId}`)
         .setLabel('📸 Confirm Payment')
-        .setStyle(ButtonStyle.Success)
+        .setStyle(ButtonStyle.Danger)
     );
 
     if (isInteraction) {

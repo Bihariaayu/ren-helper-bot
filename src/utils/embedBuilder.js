@@ -29,8 +29,14 @@ function createEmbed(options = {}) {
   }
   embed.setColor(embedColor);
 
-  if (options.thumbnail) embed.setThumbnail(options.thumbnail);
-  if (options.image) embed.setImage(options.image);
+  if (options.thumbnail) {
+    const thumbUrl = typeof options.thumbnail === 'string' ? options.thumbnail : options.thumbnail.url;
+    if (thumbUrl) embed.setThumbnail(thumbUrl);
+  }
+  if (options.image) {
+    const imageUrl = typeof options.image === 'string' ? options.image : options.image.url;
+    if (imageUrl) embed.setImage(imageUrl);
+  }
   
   if (options.fields && Array.isArray(options.fields)) {
     embed.addFields(options.fields.map(f => ({

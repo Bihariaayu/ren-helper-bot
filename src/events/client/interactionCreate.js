@@ -1,6 +1,8 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const logger = require('../../utils/logger');
-const { error } = require('../../utils/embedBuilder');
+const { createEmbed, error } = require('../../utils/embedBuilder');
+const Payment = require('../../database/models/Payment');
+const PaymentConfig = require('../../database/models/PaymentConfig');
 
 module.exports = {
   once: false,
@@ -98,12 +100,13 @@ module.exports = {
       // --- PAYMENT PROOF UPLOAD BUTTON CLICKED ---
       if (customId.startsWith('pay_proof_upload:') && interaction.isButton()) {
         try {
-          const Payment = require('../../database/models/Payment');
           
           const parts = customId.split(':');
           const paymentId = parts[1];
           const method = parts[2];
           const requestedAmount = parts[3];
+          const targetUserId = parts[4] || 'none';   // who QR was generated for
+          const requestedById = parts[5] || 'none';  // who ran the command
 
           // Check if already pending/approved
           const existing = await Payment.findOne({ paymentId, status: { $in: ['pending', 'approved'] } });
@@ -111,20 +114,13 @@ module.exports = {
             return interaction.reply({ content: `❌ A payment verification request for Payment ID **${paymentId}** is already pending or approved. You cannot submit multiple proofs for the same Payment ID.`, ephemeral: true });
           }
 
+          const hasRequestedAmount = requestedAmount && requestedAmount !== 'none';
+          // Pass target + requester info through modal customId
+          const modalCustomId = `pay_modal_submit:${paymentId}:${method}:${requestedAmount}:${targetUserId}:${requestedById}`;
+
           const modal = new ModalBuilder()
-            .setCustomId(`pay_modal_submit:${paymentId}:${method}`)
+            .setCustomId(modalCustomId)
             .setTitle('📸 Upload Payment Proof');
-
-          const amountInput = new TextInputBuilder()
-            .setCustomId('amount_input')
-            .setLabel('Payment Amount')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('Enter the exact amount paid (e.g. 149 or 0.005)')
-            .setRequired(true);
-
-          if (requestedAmount && requestedAmount !== 'none') {
-            amountInput.setValue(requestedAmount);
-          }
 
           const txIdInput = new TextInputBuilder()
             .setCustomId('tx_id_input')
@@ -140,11 +136,25 @@ module.exports = {
             .setPlaceholder('Any extra details for the staff')
             .setRequired(false);
 
-          modal.addComponents(
-            new ActionRowBuilder().addComponents(amountInput),
-            new ActionRowBuilder().addComponents(txIdInput),
-            new ActionRowBuilder().addComponents(notesInput)
-          );
+          if (hasRequestedAmount) {
+            modal.addComponents(
+              new ActionRowBuilder().addComponents(txIdInput),
+              new ActionRowBuilder().addComponents(notesInput)
+            );
+          } else {
+            const amountInput = new TextInputBuilder()
+              .setCustomId('amount_input')
+              .setLabel('Payment Amount')
+              .setStyle(TextInputStyle.Short)
+              .setPlaceholder('Enter the exact amount paid (e.g. 149 or 0.005)')
+              .setRequired(true);
+
+            modal.addComponents(
+              new ActionRowBuilder().addComponents(amountInput),
+              new ActionRowBuilder().addComponents(txIdInput),
+              new ActionRowBuilder().addComponents(notesInput)
+            );
+          }
 
           await interaction.showModal(modal);
         } catch (err) {
@@ -156,22 +166,26 @@ module.exports = {
       // --- PAYMENT MODAL SUBMITTED ---
       if (customId.startsWith('pay_modal_submit:') && interaction.isModalSubmit()) {
         try {
-          const Payment = require('../../database/models/Payment');
-          const PaymentConfig = require('../../database/models/PaymentConfig');
-          const { createEmbed } = require('../../utils/embedBuilder');
           
           const parts = customId.split(':');
           const paymentId = parts[1];
           const method = parts[2];
+          const requestedAmount = parts[3];
+          const targetUserId = parts[4] || 'none';
+          const requestedById = parts[5] || 'none';
 
-          const amountInput = interaction.fields.getTextInputValue('amount_input');
+          let amount = requestedAmount;
+          if (amount === 'none') {
+            amount = interaction.fields.getTextInputValue('amount_input');
+          }
+
           const txIdInput = interaction.fields.getTextInputValue('tx_id_input') || 'None';
           const notesInput = interaction.fields.getTextInputValue('notes_input') || 'None';
 
-          // Ephemerally prompt user to upload the image file in the channel
+          // Ephemerally prompt user to upload image
           await interaction.reply({
-            content: `💬 **Information Recorded.** Please upload your payment proof screenshot as an image attachment in this channel now (within 5 minutes).\n*Note: Your upload will be deleted from the chat immediately after capture for privacy.*`,
-            ephemeral: true
+            content: `💬 **Information Recorded!** Please upload your payment proof screenshot as an image in this channel now (within 5 minutes).\n*Your upload will be removed from chat immediately for privacy.*`,
+            flags: 64 // ephemeral
           });
 
           const channel = interaction.channel;
@@ -181,7 +195,7 @@ module.exports = {
           collector.on('collect', async (msg) => {
             try {
               const attachment = msg.attachments.first();
-              const isImage = attachment.contentType?.startsWith('image/') || attachment.url.match(/\.(jpeg|jpg|gif|png)$/i);
+              const isImage = attachment.contentType?.startsWith('image/') || attachment.url.match(/\.(jpeg|jpg|gif|png|webp)$/i);
 
               if (!isImage) {
                 await channel.send({ content: `<@${interaction.user.id}> ❌ Invalid file. Please upload a valid image (screenshot) file.` }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
@@ -189,58 +203,105 @@ module.exports = {
                 return;
               }
 
-              // Delete the screenshot message to keep chat private
-              if (channel.permissionsFor(interaction.guild.members.me).has('ManageMessages')) {
-                await msg.delete().catch(() => null);
+              // ✅ Download image as buffer BEFORE deleting the message
+              // This ensures the image is fully available for re-upload to the log channel
+              let imageBuffer;
+              try {
+                const imgRes = await fetch(attachment.url);
+                const arrayBuffer = await imgRes.arrayBuffer();
+                imageBuffer = Buffer.from(arrayBuffer);
+              } catch (fetchErr) {
+                logger.error('Failed to download screenshot buffer:', fetchErr);
+                // Fallback: use URL directly
+                imageBuffer = null;
               }
 
-              // Check for duplicate screenshots
+              // Check for duplicate (by URL before deletion)
               const isDuplicate = await Payment.findOne({ screenshotUrl: attachment.url });
               if (isDuplicate) {
-                await channel.send({ content: `<@${interaction.user.id}> ❌ This screenshot has already been submitted for verification. Duplicates are blocked.` }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
+                await channel.send({ content: `<@${interaction.user.id}> ❌ This screenshot has already been submitted. Duplicates are blocked.` }).then(m => setTimeout(() => m.delete().catch(() => null), 5000));
                 collector.stop('duplicate');
                 return;
               }
 
+              // Now delete the user's upload message from the channel
+              if (channel.permissionsFor(interaction.guild.members.me).has('ManageMessages')) {
+                await msg.delete().catch(() => null);
+              }
+
+              // Resolve target user and requester
+              let targetUser = null;
+              let requesterUser = null;
+              try {
+                if (targetUserId && targetUserId !== 'none') {
+                  targetUser = await client.users.fetch(targetUserId).catch(() => null);
+                }
+                if (requestedById && requestedById !== 'none') {
+                  requesterUser = await client.users.fetch(requestedById).catch(() => null);
+                }
+              } catch (_) {}
+
               // Save to DB
-              await Payment.create({
+              const newPayment = await Payment.create({
                 paymentId,
                 guildId: interaction.guild.id,
                 guildName: interaction.guild.name,
                 userId: interaction.user.id,
                 username: interaction.user.username,
+                requestedById: requestedById !== 'none' ? requestedById : interaction.user.id,
+                requestedByUsername: requesterUser?.username || interaction.user.username,
+                targetUserId: targetUserId !== 'none' ? targetUserId : null,
+                targetUsername: targetUser?.username || null,
+                channelId: interaction.channel.id,
                 method,
-                amount: amountInput,
+                amount,
                 notes: notesInput,
                 transactionId: txIdInput,
                 screenshotUrl: attachment.url,
                 status: 'pending'
               });
 
-              // Stop collector and notify success
               collector.stop('success');
-              await channel.send({ content: `<@${interaction.user.id}> ✅ Your payment proof for Payment ID **${paymentId}** has been successfully submitted for staff verification!` }).then(m => setTimeout(() => m.delete().catch(() => null), 10000));
+              await channel.send({ content: `<@${interaction.user.id}> ✅ Payment proof for **${paymentId}** submitted for verification!` }).then(m => setTimeout(() => m.delete().catch(() => null), 10000));
 
               // Log to payment logs channel
               const config = await PaymentConfig.findOne({ guildId: interaction.guild.id });
               if (config && config.paymentChannelId) {
                 const logChannel = await interaction.guild.channels.fetch(config.paymentChannelId).catch(() => null);
                 if (logChannel) {
+                  const fileExtension = (attachment.name || 'screenshot.png').split('.').pop() || 'png';
+                  const fileName = `proof_${paymentId}.${fileExtension}`;
+
+                  // Build the file attachment from the buffer (or URL as fallback)
+                  const file = imageBuffer
+                    ? new AttachmentBuilder(imageBuffer, { name: fileName })
+                    : new AttachmentBuilder(attachment.url, { name: fileName });
+
+                  // Build rich log embed
+                  const payer = interaction.user;
+                  const forUser = targetUser || payer;
+                  const generatedBy = requesterUser || payer;
+
                   const logEmbed = createEmbed({
                     title: `💳 New Payment Submission`,
-                    description: `A customer has uploaded payment proof for verification.`,
-                    color: 'green',
+                    description: `Payment proof submitted and awaiting staff verification.`,
+                    color: 0x2ECC71,
                     timestamp: true
                   })
-                  .setImage(attachment.url)
+                  .setImage(`attachment://${fileName}`)
                   .addFields([
-                    { name: '👤 User', value: `${interaction.user} (\`${interaction.user.username}\`)`, inline: true },
-                    { name: '🆔 User ID', value: `\`${interaction.user.id}\``, inline: true },
-                    { name: '💰 Amount', value: `\`${amountInput}\``, inline: true },
+                    { name: '📸 Submitted By', value: `${payer} (\`${payer.username}\`)`, inline: true },
+                    { name: '🆔 Payer ID', value: `\`${payer.id}\``, inline: true },
+                    { name: '\u200b', value: '\u200b', inline: true },
+                    { name: '🎯 Payment For', value: targetUser ? `${targetUser} (\`${targetUser.username}\`)` : `${payer} (\`${payer.username}\`)`, inline: true },
+                    { name: '🧑‍💼 QR Generated By', value: generatedBy !== payer ? `${generatedBy} (\`${generatedBy.username}\`)` : '`Same as payer`', inline: true },
+                    { name: '\u200b', value: '\u200b', inline: true },
+                    { name: '💰 Amount', value: `\`${amount}\``, inline: true },
                     { name: '💳 Payment Method', value: `\`${method}\``, inline: true },
                     { name: '🧾 Payment ID', value: `\`${paymentId}\``, inline: true },
                     { name: '🧾 Tx / Reference ID', value: `\`${txIdInput}\``, inline: true },
-                    { name: '📝 Notes', value: `\`${notesInput}\``, inline: false }
+                    { name: '📝 Notes', value: notesInput !== 'None' ? `\`${notesInput}\`` : '`None`', inline: true },
+                    { name: '\u200b', value: '\u200b', inline: true }
                   ]);
 
                   const verifyRow = new ActionRowBuilder().addComponents(
@@ -248,7 +309,12 @@ module.exports = {
                     new ButtonBuilder().setCustomId(`pay_verify_reject:${paymentId}`).setLabel('❌ Reject Payment').setStyle(ButtonStyle.Danger)
                   );
 
-                  await logChannel.send({ embeds: [logEmbed], components: [verifyRow] });
+                  const logMessage = await logChannel.send({ embeds: [logEmbed], components: [verifyRow], files: [file] });
+                  const permanentUrl = logMessage.attachments.first()?.url;
+                  if (permanentUrl) {
+                    newPayment.screenshotUrl = permanentUrl;
+                    await newPayment.save();
+                  }
                 }
               }
 
@@ -256,7 +322,9 @@ module.exports = {
               logger.logToGuild(
                 interaction.guild,
                 'Payment Submission',
-                `💳 New payment proof submitted by ${interaction.user} for Payment ID: \`${paymentId}\` (Amount: \`${amountInput}\`, Method: \`${method}\`)`
+                `💳 Payment proof submitted by ${interaction.user} for Payment ID: \`${paymentId}\` (Amount: \`${amount}\`, Method: \`${method}\`${
+                  targetUser ? `, For: ${targetUser}` : ''
+                })`
               );
 
             } catch (err) {
@@ -272,7 +340,6 @@ module.exports = {
       // --- STAFF VERIFICATION: APPROVE BUTTON ---
       if (customId.startsWith('pay_verify_approve:') && interaction.isButton()) {
         try {
-          const Payment = require('../../database/models/Payment');
           
           // Verify permissions
           const hasPerms = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
@@ -313,11 +380,21 @@ module.exports = {
             await user.send({ embeds: [dmEmbed] }).catch(() => null);
           }
 
-          // Update verification log embed in log channel
-          const logEmbed = createEmbed(interaction.message.embeds[0].data);
-          logEmbed.setTitle('✅ Payment Approved');
-          logEmbed.setColor(0x2ECC71); // Green
-          logEmbed.addFields([{ name: '🛡️ Verified By', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: true }]);
+          // Send approval message to the origin channel where the QR was generated
+          if (payment.channelId) {
+            const originChannel = await client.channels.fetch(payment.channelId).catch(() => null);
+            if (originChannel) {
+              await originChannel.send({
+                content: `✅ <@${payment.userId}> Your payment got approved. Wait for your order, our staff will message you shortly.`
+              }).catch(() => null);
+            }
+          }
+
+          // Update verification log embed in log channel (clone existing embed, mark as approved)
+          const logEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+            .setTitle('✅ Payment Approved')
+            .setColor(0x2ECC71)
+            .addFields([{ name: '🛡️ Verified By', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: true }]);
 
           await interaction.message.edit({ embeds: [logEmbed], components: [] });
 
@@ -336,8 +413,6 @@ module.exports = {
       // --- STAFF VERIFICATION: REJECT BUTTON ---
       if (customId.startsWith('pay_verify_reject:') && interaction.isButton()) {
         try {
-          const Payment = require('../../database/models/Payment');
-
           // Verify permissions
           const hasPerms = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
           if (!hasPerms) {
@@ -378,8 +453,6 @@ module.exports = {
       // --- STAFF REJECT MODAL SUBMITTED ---
       if (customId.startsWith('pay_reject_submit:') && interaction.isModalSubmit()) {
         try {
-          const Payment = require('../../database/models/Payment');
-          const { createEmbed } = require('../../utils/embedBuilder');
           
           const paymentId = customId.split(':')[1];
           const reasonInput = interaction.fields.getTextInputValue('reason_input');
@@ -411,14 +484,14 @@ module.exports = {
             await user.send({ embeds: [dmEmbed] }).catch(() => null);
           }
 
-          // Update verification log embed
-          const logEmbed = createEmbed(interaction.message.embeds[0].data);
-          logEmbed.setTitle('❌ Payment Rejected');
-          logEmbed.setColor(0xE74C3C); // Red
-          logEmbed.addFields([
-            { name: '🛡️ Rejected By', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: true },
-            { name: '📝 Rejection Reason', value: `\`${reasonInput}\``, inline: false }
-          ]);
+          // Update verification log embed (clone existing embed, mark as rejected)
+          const logEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+            .setTitle('❌ Payment Rejected')
+            .setColor(0xE74C3C)
+            .addFields([
+              { name: '🛡️ Rejected By', value: `${interaction.user} (\`${interaction.user.tag}\`)`, inline: true },
+              { name: '📝 Rejection Reason', value: `\`${reasonInput}\``, inline: false }
+            ]);
 
           await interaction.message.edit({ embeds: [logEmbed], components: [] });
 
