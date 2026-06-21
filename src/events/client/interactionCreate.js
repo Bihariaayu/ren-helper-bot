@@ -50,38 +50,7 @@ module.exports = {
         }
       }
 
-      // Delegate Ticket interactions
-      if (customId.startsWith('ticket_')) {
-        if (interaction.isModalSubmit() && customId.startsWith('ticket_modal_close_')) {
-          try {
-            const ticketCmd = client.commands.get('ticket');
-            if (ticketCmd && typeof ticketCmd.runClose === 'function') {
-              const reason = interaction.fields.getTextInputValue('reason') || 'No reason provided';
-              await ticketCmd.runClose(interaction, reason, true);
-            } else {
-              await interaction.reply({ content: '❌ Ticket close command is not loaded.', ephemeral: true });
-            }
-          } catch (err) {
-            logger.error(`Error handling ticket close modal submit:`, err);
-          }
-        } else if (customId === 'ticket_create') {
-          // Keep the simulation option for compatibility if needed, but otherwise it will delegate
-          try {
-            await interaction.reply({ content: '🎫 Ticket created successfully! A private support channel has been simulated for you.', ephemeral: true });
-          } catch (err) {
-            logger.error('Error simulating ticket creation', err);
-          }
-        } else {
-          const ticketCmd = client.commands.get('ticket');
-          if (ticketCmd && typeof ticketCmd.handleInteraction === 'function') {
-            try {
-              await ticketCmd.handleInteraction(interaction, client);
-            } catch (err) {
-              logger.error(`Error handling ticket interaction ${customId}:`, err);
-            }
-          }
-        }
-      }
+
     }
   }
 };
