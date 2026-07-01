@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require('../localDb');
 
 const PaymentSchema = new mongoose.Schema({
   paymentId: { type: String, required: true, unique: true },

@@ -1,13 +1,17 @@
-const mongoose = require('mongoose');
-const config = require('../config');
+const fs = require('fs');
+const path = require('path');
+const logger = require('../utils/logger');
 
 async function connectDatabase() {
   try {
-    mongoose.set('strictQuery', false);
-    await mongoose.connect(config.mongoUri);
-    console.log('[DATABASE] Connected to MongoDB database successfully.');
+    const dataDir = path.join(__dirname, '../../data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    logger.info('[DATABASE] Using local file-based JSON storage (No online database required).');
+    logger.info(`[DATABASE] Data directory: ${dataDir}`);
   } catch (error) {
-    console.error('[DATABASE] Failed to connect to MongoDB:', error);
+    logger.error('[DATABASE] Failed to initialize local storage directory:', error);
     process.exit(1);
   }
 }

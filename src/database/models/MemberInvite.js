@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require('../localDb');
 
 const MemberInviteSchema = new mongoose.Schema({
   guildId: { type: String, required: true },

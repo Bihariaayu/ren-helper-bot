@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const mongoose = require('mongoose');
+const mongoose = require('../../database/localDb');
 const { success } = require('../../utils/embedBuilder');
 
 module.exports = {
@@ -23,11 +23,7 @@ async function runPing(context, client) {
   const ping = sent.createdTimestamp - context.createdTimestamp;
   const apiPing = client.ws.ping;
   
-  // Database connection check
-  const dbState = mongoose.connection.readyState;
-  let dbStatus = 'Disconnected';
-  if (dbState === 1) dbStatus = '🟢 Connected';
-  else if (dbState === 2) dbStatus = '🟡 Connecting';
+  const dbStatus = '🟢 Connected (Local JSON Files)';
   
   const pingEmbed = success(
     `• **Bot Latency:** \`${ping}ms\`\n` +
